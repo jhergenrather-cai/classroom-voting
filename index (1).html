@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Classroom Voting Machine</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
+<style>
+:root{--bg:#07131f;--panel:#10263a;--panel2:#15344f;--text:#f7fbff;--muted:#b9c9d8;--accent:#ffd166;--good:#68e18a}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;font-family:Arial,Helvetica,sans-serif;color:var(--text);background:radial-gradient(circle at 50% 0,#1b476a 0,#07131f 55%)}
+.wrap{max-width:900px;margin:auto;padding:28px 18px 60px}
+header{text-align:center}
+h1{font-size:clamp(2.3rem,7vw,4.6rem);margin:0;line-height:.95}
+.sub{color:var(--muted);font-size:1.05rem;line-height:1.45}
+.card{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid #ffffff14;border-radius:24px;padding:24px;margin-top:22px;box-shadow:0 20px 55px #0007}
+#question{font-size:clamp(1.5rem,4vw,2.5rem);font-weight:900;margin:6px 0 20px}
+.period-row{display:flex;gap:12px;align-items:center;justify-content:center;flex-wrap:wrap;margin-bottom:20px}
+select{font-size:1.1rem;padding:12px 14px;border-radius:12px;border:2px solid #6ee7ff88;background:#081a29;color:white;font-weight:800}
+.choices{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.choice{min-height:150px;border:0;border-radius:20px;background:#f8fbff;color:#132131;padding:16px;font-size:1.25rem;font-weight:900;cursor:pointer;transition:.18s;box-shadow:0 8px 20px #0004}
+.choice:hover:not(:disabled){transform:translateY(-4px) scale(1.02)}
+.choice .emoji{display:block;font-size:3.8rem;margin-bottom:8px}
+.choice:disabled{opacity:.45;cursor:not-allowed}
+.notice{text-align:center;color:var(--muted);margin-top:14px}
+.success{display:none;text-align:center;background:#0b2d21;border:2px solid #68e18a88;border-radius:22px;padding:30px;margin-top:22px}
+.success.show{display:block}
+.check{font-size:5rem}
+.waiting{text-align:center;padding:38px 16px}
+.results{display:none;margin-top:22px}.results.show{display:block}
+.bar-row{margin:16px 0}.bar-label{display:flex;justify-content:space-between;font-weight:900;margin-bottom:6px}
+.bar{height:34px;background:#081a29;border-radius:999px;overflow:hidden}.fill{height:100%;width:0;background:linear-gradient(90deg,#6ee7ff,#ffd166);transition:width .7s ease}
+@media(max-width:700px){.choices{grid-template-columns:1fr}.choice{min-height:105px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header><h1>🗳️ Classroom Voting Machine</h1><p class="sub">Choose your class period, make one choice, and lock it in.</p></header>
+<div class="card">
+  <div id="loading" class="waiting">Loading today's poll...</div>
+  <div id="pollUI" style="display:none">
+    <div id="question"></div>
+    <div class="period-row">
+      <label for="period"><strong>Class Period:</strong></label>
+      <select id="period">
+        <option value="">Choose period...</option>
+        <option value="1">1st Period</option><option value="2">2nd Period</option><option value="3">3rd Period</option>
+        <option value="4">4th Period</option><option value="5">5th Period</option><option value="6">6th Period</option>
+      </select>
+    </div>
+    <div id="choices" class="choices"></div>
+    <div class="notice">🔒 One vote per browser for each poll.</div>
+  </div>
+  <div id="success" class="success">
+    <div class="check">✅</div>
+    <h2>Vote Recorded!</h2>
+    <p id="successText" class="sub"></p>
+    <p class="sub">Now make your prediction before the teacher reveals the results.</p>
+  </div>
+  <div id="results" class="results">
+    <h2>📊 Results Revealed</h2>
+    <div id="resultBars"></div>
+  </div>
+</div>
+</div>
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyDqpopu4aGB9OzAkUwk08qfR_qlH16HMNI",
+  authDomain: "discussonboard-30dcd.firebaseapp.com",
+  databaseURL: "https://discussonboard-30dcd-default-rtdb.firebaseio.com",
+  projectId: "discussonboard-30dcd",
+  storageBucket: "discussonboard-30dcd.firebasestorage.app"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+const loading=document.getElementById('loading'),pollUI=document.getElementById('pollUI'),questionEl=document.getElementById('question'),
+choicesEl=document.getElementById('choices'),periodEl=document.getElementById('period'),success=document.getElementById('success'),
+successText=document.getElementById('successText'),results=document.getElementById('results'),resultBars=document.getElementById('resultBars');
+let currentPoll=null,currentPollId=null,resultsRef=null;
+
+function browserId(){
+  let id=localStorage.getItem('cvm_browser_id');
+  if(!id){id='b_'+Math.random().toString(36).slice(2)+Date.now().toString(36);localStorage.setItem('cvm_browser_id',id)}
+  return id;
+}
+function hasVoted(pollId){return localStorage.getItem('cvm_voted_'+pollId)==='yes'}
+function renderPoll(poll){
+  currentPoll=poll;currentPollId=poll.id;loading.style.display='none';pollUI.style.display=poll.open?'block':'none';
+  questionEl.textContent=poll.question||'Vote now!';choicesEl.innerHTML='';
+  (poll.choices||[]).forEach((c,i)=>{
+    const btn=document.createElement('button');btn.className='choice';
+    const parts=c.split(' ');const em=parts.length>1?parts.shift():'✅';const txt=parts.length?parts.join(' '):c;
+    btn.innerHTML='<span class="emoji">'+em+'</span>'+txt;
+    btn.disabled=hasVoted(poll.id)||!poll.open;btn.onclick=()=>castVote(i,c);choicesEl.appendChild(btn);
+  });
+  if(hasVoted(poll.id)){success.classList.add('show');successText.textContent='Your vote for this poll has already been recorded.'}else success.classList.remove('show');
+  if(poll.reveal)listenForResults();else results.classList.remove('show');
+}
+function castVote(choiceIndex,label){
+  const period=periodEl.value;if(!period){alert('Choose your class period first.');periodEl.focus();return}
+  if(!currentPoll||hasVoted(currentPoll.id))return;
+  const path='classroomVoting/votes/'+currentPoll.id+'/'+period+'/'+browserId();
+  db.ref(path).set({choice:choiceIndex,label:label,timestamp:firebase.database.ServerValue.TIMESTAMP}).then(()=>{
+    localStorage.setItem('cvm_voted_'+currentPoll.id,'yes');
+    [...document.querySelectorAll('.choice')].forEach(b=>b.disabled=true);
+    successText.textContent='You voted: '+label;success.classList.add('show');
+  }).catch(err=>alert('Vote could not be recorded: '+err.message));
+}
+function listenForResults(){
+  results.classList.add('show');if(resultsRef)resultsRef.off();
+  resultsRef=db.ref('classroomVoting/votes/'+currentPoll.id);
+  resultsRef.on('value',snap=>{
+    const counts=new Array((currentPoll.choices||[]).length).fill(0);
+    snap.forEach(periodSnap=>periodSnap.forEach(voteSnap=>{
+      const v=voteSnap.val();if(v&&Number.isInteger(v.choice)&&counts[v.choice]!==undefined)counts[v.choice]++;
+    }));
+    const total=counts.reduce((a,b)=>a+b,0);resultBars.innerHTML='';
+    counts.forEach((count,i)=>{
+      const pct=total?Math.round(count/total*100):0,row=document.createElement('div');row.className='bar-row';
+      row.innerHTML='<div class="bar-label"><span>'+currentPoll.choices[i]+'</span><span>'+count+' ('+pct+'%)</span></div><div class="bar"><div class="fill" style="width:'+pct+'%"></div></div>';
+      resultBars.appendChild(row);
+    });
+  });
+}
+db.ref('classroomVoting/current').on('value',snap=>{
+  const poll=snap.val();if(!poll){loading.textContent='No poll is open right now.';pollUI.style.display='none';return}renderPoll(poll);
+});
+</script>
+</body>
+</html>

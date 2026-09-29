@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Teacher Voting Dashboard</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
+<style>
+:root{--panel:#10263a;--panel2:#15344f;--muted:#b9c9d8}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 50% 0,#1b476a,#07131f 55%);color:white;font-family:Arial,Helvetica,sans-serif;min-height:100vh}
+.wrap{max-width:1100px;margin:auto;padding:28px 18px 70px}h1{font-size:clamp(2.2rem,6vw,4rem);margin:0}.sub{color:var(--muted)}
+.grid{display:grid;grid-template-columns:.95fr 1.05fr;gap:18px;margin-top:20px}.card{background:linear-gradient(var(--panel2),var(--panel));padding:22px;border-radius:22px;border:1px solid #ffffff16;box-shadow:0 18px 50px #0006}
+input,textarea,select{width:100%;padding:12px;border-radius:10px;border:1px solid #ffffff30;background:#081a29;color:white;font-size:1rem;margin:5px 0 12px}
+textarea{min-height:80px;resize:vertical}button{border:0;border-radius:11px;padding:12px 15px;font-weight:900;cursor:pointer;margin:5px 5px 5px 0}
+.primary{background:#ffd166;color:#18222d}.green{background:#68e18a;color:#11251a}.red{background:#ff6b6b;color:#2a1010}.blue{background:#6ee7ff;color:#10212e}
+.choice-input{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}.choice-input button{background:#ff6b6b}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}.pill{padding:7px 10px;border-radius:999px;background:#081a29;color:#cfe0ef;font-weight:800;font-size:.9rem}
+.bar-row{margin:15px 0}.bar-label{display:flex;justify-content:space-between;font-weight:900;margin-bottom:6px}.bar{height:36px;background:#081a29;border-radius:999px;overflow:hidden}.fill{height:100%;background:linear-gradient(90deg,#6ee7ff,#ffd166);transition:width .55s ease}
+.big-total{font-size:2rem;font-weight:1000;margin:8px 0 14px}#login{max-width:430px;margin:70px auto}#app{display:none}
+.presentation .grid{grid-template-columns:1fr}.presentation #setupCard{display:none}.presentation #resultsCard{font-size:1.2rem}.presentation .bar{height:52px}
+@media(max-width:800px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div id="login" class="card">
+<h1>🔐 Teacher Dashboard</h1><p class="sub">Enter the teacher PIN.</p>
+<input id="pin" type="password" inputmode="numeric" placeholder="PIN"><button id="loginBtn" class="primary">Enter</button>
+<p class="sub" style="font-size:.85rem">Default PIN: 2468 — change TEACHER_PIN in teacher.html later.</p>
+</div>
+<div id="app">
+<header><h1>📊 Classroom Voting Dashboard</h1><p class="sub">Create, watch, filter, and reveal live class polls.</p></header>
+<div class="grid">
+<section id="setupCard" class="card">
+<h2>🛠️ Poll Setup</h2>
+<label>Question</label><textarea id="question">Which gum flavor would you choose?</textarea>
+<label>Choices</label><div id="choiceList"></div><button id="addChoice" class="blue">+ Add Choice</button>
+<hr style="border-color:#ffffff18;margin:20px 0">
+<button id="startPoll" class="green">▶ Start New Poll</button>
+<button id="closePoll" class="red">■ Close Voting</button>
+<button id="revealBtn" class="primary">👀 Reveal Results</button>
+<button id="hideBtn" class="blue">🙈 Hide Results</button>
+<button id="clearVotes" class="red">🗑 Clear Current Votes</button>
+</section>
+<section id="resultsCard" class="card">
+<div class="toolbar">
+<select id="periodFilter" style="max-width:190px;margin:0">
+<option value="all">All Classes</option><option value="1">1st Period</option><option value="2">2nd Period</option><option value="3">3rd Period</option>
+<option value="4">4th Period</option><option value="5">5th Period</option><option value="6">6th Period</option>
+</select>
+<button id="presentBtn" class="blue">🖥 Presentation Mode</button>
+</div>
+<div id="pollStatus" class="pill">No poll loaded</div><h2 id="liveQuestion">Waiting for poll...</h2>
+<div class="big-total">Responses: <span id="total">0</span></div><div id="bars"></div>
+</section>
+</div>
+</div>
+</div>
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyDqpopu4aGB9OzAkUwk08qfR_qlH16HMNI",
+  authDomain: "discussonboard-30dcd.firebaseapp.com",
+  databaseURL: "https://discussonboard-30dcd-default-rtdb.firebaseio.com",
+  projectId: "discussonboard-30dcd",
+  storageBucket: "discussonboard-30dcd.firebasestorage.app"
+};
+firebase.initializeApp(firebaseConfig);
+const db=firebase.database(),TEACHER_PIN='2468',$=id=>document.getElementById(id);
+$('loginBtn').onclick=()=>{if($('pin').value===TEACHER_PIN){$('login').style.display='none';$('app').style.display='block'}else alert('Incorrect PIN.')};
+const choiceList=$('choiceList');
+function addChoice(value=''){const row=document.createElement('div');row.className='choice-input';row.innerHTML='<input placeholder="Example: 🍉 Watermelon"><button type="button">✕</button>';row.querySelector('input').value=value;row.querySelector('button').onclick=()=>row.remove();choiceList.appendChild(row)}
+['🍉 Watermelon','🌿 Mint','🍓 Strawberry'].forEach(addChoice);
+$('addChoice').onclick=()=>addChoice('');
+let currentPoll=null,voteListenerRef=null;
+function choicesFromForm(){return [...choiceList.querySelectorAll('input')].map(i=>i.value.trim()).filter(Boolean)}
+$('startPoll').onclick=async()=>{const question=$('question').value.trim(),choices=choicesFromForm();if(!question||choices.length<2)return alert('Enter a question and at least two choices.');if(!confirm('Start a NEW poll?'))return;const id='poll_'+Date.now();await db.ref('classroomVoting/current').set({id,question,choices,open:true,reveal:false,createdAt:firebase.database.ServerValue.TIMESTAMP})};
+$('closePoll').onclick=()=>db.ref('classroomVoting/current/open').set(false);
+$('revealBtn').onclick=()=>db.ref('classroomVoting/current/reveal').set(true);
+$('hideBtn').onclick=()=>db.ref('classroomVoting/current/reveal').set(false);
+$('clearVotes').onclick=async()=>{if(!currentPoll)return;if(!confirm('Delete ALL votes for the current poll?'))return;await db.ref('classroomVoting/votes/'+currentPoll.id).remove()};
+$('periodFilter').onchange=()=>listenVotes();$('presentBtn').onclick=()=>document.body.classList.toggle('presentation');
+db.ref('classroomVoting/current').on('value',snap=>{currentPoll=snap.val();if(!currentPoll){$('pollStatus').textContent='No active poll';$('liveQuestion').textContent='Waiting for poll...';$('bars').innerHTML='';$('total').textContent='0';return}
+$('liveQuestion').textContent=currentPoll.question;$('pollStatus').textContent=(currentPoll.open?'🟢 Voting Open':'🔴 Voting Closed')+' • '+(currentPoll.reveal?'👀 Results Revealed':'🙈 Results Hidden');listenVotes()});
+function listenVotes(){if(!currentPoll)return;if(voteListenerRef)voteListenerRef.off();const filter=$('periodFilter').value,path=filter==='all'?'classroomVoting/votes/'+currentPoll.id:'classroomVoting/votes/'+currentPoll.id+'/'+filter;voteListenerRef=db.ref(path);voteListenerRef.on('value',snap=>{const counts=new Array(currentPoll.choices.length).fill(0);if(filter==='all'){snap.forEach(periodSnap=>periodSnap.forEach(voteSnap=>{const v=voteSnap.val();if(v&&Number.isInteger(v.choice)&&counts[v.choice]!==undefined)counts[v.choice]++}))}else{snap.forEach(voteSnap=>{const v=voteSnap.val();if(v&&Number.isInteger(v.choice)&&counts[v.choice]!==undefined)counts[v.choice]++})}renderBars(counts)})}
+function renderBars(counts){const total=counts.reduce((a,b)=>a+b,0);$('total').textContent=total;$('bars').innerHTML='';counts.forEach((count,i)=>{const pct=total?Math.round(count/total*100):0,row=document.createElement('div');row.className='bar-row';row.innerHTML='<div class="bar-label"><span>'+currentPoll.choices[i]+'</span><span>'+count+' • '+pct+'%</span></div><div class="bar"><div class="fill" style="width:'+pct+'%"></div></div>';$('bars').appendChild(row)})}
+</script>
+</body>
+</html>
